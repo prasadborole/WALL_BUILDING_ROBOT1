@@ -1,0 +1,494 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#define FCPU 11059200ul 
+
+unsigned long int ShaftCountLeft = 0; //to keep track of left position encoder 
+unsigned long int ShaftCountRight = 0; //to keep track of right position encoder
+unsigned long int ShaftCountext = 0;
+unsigned int Degrees; //to accept angle in degrees for turning
+
+
+//Function to configure ports to enable robot's motion
+void motion_pin_config (void) 
+{
+ DDRA = DDRA | 0xCF;   //Motion control pins set as output
+ PORTA = PORTA & 0x30; //Inital value of the motion control pins set to 0
+ DDRL = DDRL | 0x18;   //Setting PL3 and PL4 pins as output for PWM generation
+ PORTL = PORTL | 0x18; //Setting PL3 and PL4 pins as logic 1
+ DDRE = DDRE | 0x08;   //Setting PE3 pin as output for PWM generation
+ PORTE = PORTE | 0x08; //Setting PE3 pin as logic 1
+}
+
+
+/***** Function To Initialize UART0  for ZIGBEE*****/
+// desired baud rate:9600
+// actual baud rate:9600 (0.0%)
+// char size: 8 bit
+// parity: Disabled
+
+/*void uart0_init(void)
+{
+ 	UCSR0B = 0x00; 			//disable while setting baud rate
+ 	UCSR0A = 0x00;
+ 	UCSR0C = 0x06;
+ 	UBRR0L = 0x47; 			//set baud rate lo
+ 	UBRR0H = 0x00; 			//set baud rate hi
+ 	UCSR0B = 0x98;
+}
+
+SIGNAL(SIG_USART0_RECV)
+{
+
+	data = UDR0; 			//making copy of data from UDR0 in data variable
+}	
+
+*/
+//Configure PORTB 5 pin for servo motor 1 operation
+void servo1_pin_config (void)
+{
+ DDRB  = DDRB | 0x20;  //making PORTB 5 pin output
+ PORTB = PORTB | 0x20; //setting PORTB 5 pin to logic 1
+}
+
+
+//Function to configure INT4 (PORTE 4) pin as input for the left position encoder
+void left_encoder_pin_config (void)
+{
+ DDRE  = DDRE & 0xEF;  //Set the direction of the PORTE 4 pin as input
+ PORTE = PORTE | 0x10; //Enable internal pull-up for PORTE 4 pin
+}
+
+//Function to configure INT5 (PORTE 5) pin as input for the right position encoder
+void right_encoder_pin_config (void)
+{
+ DDRE  = DDRE & 0xDF;  //Set the direction of the PORTE 4 pin as input
+ PORTE = PORTE | 0x20; //Enable internal pull-up for PORTE 4 pin
+}
+
+//Function to configure INT6 (PORTE 6) pin as input for the external position encoder
+void ext_encoder_pin_config (void)
+{
+ DDRE  = DDRE & 0xBF;  //Set the direction of the PORTE 6 pin as input
+ PORTE = PORTE | 0x40; //Enable internal pull-up for PORTE 6 pin
+}
+
+
+
+//Function to initialize ports
+void port_init()
+{
+ motion_pin_config();
+ servo1_pin_config();
+ left_encoder_pin_config(); //left encoder pin config
+ right_encoder_pin_config(); //right encoder pin config	
+ ext_encoder_pin_config();
+
+}
+
+
+
+// Timer 5 initialized in PWM mode for velocity controlof internal dc motors
+// Prescale:256
+// PWM 8bit fast, TOP=0x00FF
+// Timer Frequency:225.000Hz
+void timer5_init()
+{
+	TCCR5B = 0x00;	//Stop
+	TCNT5H = 0xFF;	//Counter higher 8-bit value to which OCR5xH value is compared with
+	TCNT5L = 0x01;	//Counter lower 8-bit value to which OCR5xH value is compared with
+	OCR5AH = 0x00;	//Output compare register high value for Left Motor
+	OCR5AL = 0xFF;	//Output compare register low value for Left Motor
+	OCR5BH = 0x00;	//Output compare register high value for Right Motor
+	OCR5BL = 0xFF;	//Output compare register low value for Right Motor
+	OCR5CH = 0x00;	//Output compare register high value for Motor C1
+	OCR5CL = 0xFF;	//Output compare register low value for Motor C1
+	TCCR5A = 0xA9;	/*{COM5A1=1, COM5A0=0; COM5B1=1, COM5B0=0; COM5C1=1 COM5C0=0}
+ 					  For Overriding normal port functionality to OCRnA outputs.
+				  	  {WGM51=0, WGM50=1} Along With WGM52 in TCCR5B for Selecting FAST PWM 8-bit Mode*/
+	
+	TCCR5B = 0x0B;	//WGM12=1; CS12=0, CS11=1, CS10=1 (Prescaler=64)
+}
+
+
+
+// Timer 3 initialized in PWM mode for velocity control of External dc motor
+// Prescale:64
+// PWM 8bit fast, TOP=0x00FF
+// Timer Frequency:900Hz
+void timer3_init()
+{
+	TCCR3B = 0x00;	//Stop
+	TCNT3H = 0xFF;	//Counter higher 8-bit value to which OCR3xH value is compared with
+	TCNT3L = 0x01;	//Counter lower 8-bit value to which OCR3xH value is compared with
+	OCR3AH = 0x00;	//Output compare register high value for C2 motor
+	OCR3AL = 0xFF;	//Output compare register low value for C2 motor
+	OCR3BH = 0x00;	//Not used
+	OCR3BL = 0xFF;	//Not used
+	OCR3CH = 0x00;	//Not used
+	OCR3CL = 0xFF;	//Not used
+	TCCR3A = 0x81;	/*{COM3A1=1, COM3A0=0; COM3B1=0, COM3B0=0; COM3C1=0 COM3C0=0}
+ 					  For Overriding normal port functionality to OCRnA outputs.
+				  	  {WGM31=0, WGM30=1} Along With WGM32 in TCCR3B for Selecting FAST PWM 8-bit Mode*/
+	
+	TCCR3B = 0x0B;	//WGM12=1; CS12=0, CS11=1, CS10=1 (Prescaler=64)
+}
+
+
+
+//TIMER1 initialization in 10 bit fast PWM mode for servo1_motor
+//prescale:256
+// WGM: 7) PWM 10bit fast, TOP=0x03FF
+// actual value: 52.25Hz 
+void timer1_init(void)
+{
+ TCCR1B = 0x00; //stop
+ TCNT1H = 0xFC; //Counter high value to which OCR1xH value is to be compared with
+ TCNT1L = 0x01;	//Counter low value to which OCR1xH value is to be compared with
+ OCR1AH = 0x03;	//Output compare Register high value for servo 1
+ OCR1AL = 0xFF;	//Output Compare Register low Value For servo 1
+ 
+ ICR1H  = 0x03;	
+ ICR1L  = 0xFF;
+ TCCR1A = 0xAB; /*{COM1A1=1, COM1A0=0; COM1B1=1, COM1B0=0; COM1C1=1 COM1C0=0}
+ 					For Overriding normal port functionality to OCRnA outputs.
+				  {WGM11=1, WGM10=1} Along With WGM12 in TCCR1B for Selecting FAST PWM Mode*/
+ TCCR1C = 0x00;
+ TCCR1B = 0x0C; //WGM12=1; CS12=1, CS11=0, CS10=0 (Prescaler=256)
+}
+
+
+
+
+
+void left_position_encoder_interrupt_init (void) //Interrupt 4 enable
+{
+ cli(); //Clears the global interrupt
+ EICRB = EICRB | 0x02; // INT4 is set to trigger with falling edge
+ EIMSK = EIMSK | 0x10; // Enable Interrupt INT4 for left position encoder
+ sei();   // Enables the global interrupt 
+}
+
+void right_position_encoder_interrupt_init (void) //Interrupt 5 enable
+{
+ cli(); //Clears the global interrupt
+ EICRB = EICRB | 0x08; // INT5 is set to trigger with falling edge
+ EIMSK = EIMSK | 0x20; // Enable Interrupt INT5 for right position encoder
+ sei();   // Enables the global interrupt 
+}
+
+void ext_position_encoder_interrupt_init (void) //Interrupt 6 enable
+{
+ cli(); //Clears the global interrupt
+ EICRB = EICRB | 0x20; // INT6 is set to trigger with falling edge
+ EIMSK = EIMSK | 0x40; // Enable Interrupt INT6 for right position encoder
+ sei();   // Enables the global interrupt 
+}
+
+//Function to initialize all the devices
+void init_devices()
+{
+ cli(); //Clears the global interrupt
+ port_init();  //Initializes all the ports
+ timer5_init();
+ timer3_init();
+ timer1_init();
+ left_position_encoder_interrupt_init();
+ right_position_encoder_interrupt_init();
+ ext_position_encoder_interrupt_init ();
+ sei();   // Enables the global interrupt 
+}
+
+
+
+// Function for robot velocity control
+void velocity (unsigned char left_motor, unsigned char right_motor)
+{
+	OCR5AL = (unsigned char)left_motor;
+	OCR5BL = (unsigned char)right_motor;
+}
+
+
+//ISR for right position encoder
+ISR(INT5_vect)  
+{
+ ShaftCountRight++;  //increment right shaft position count
+}
+
+
+//ISR for left position encoder
+ISR(INT4_vect)
+{
+ ShaftCountLeft++;  //increment left shaft position count
+}
+
+//ISR for external position encoder
+ISR(INT6_vect)
+{
+ ShaftCountext++;  //increment left shaft position count
+}
+
+
+//Function used for setting motor's direction
+void motion_set (unsigned char Direction)
+{
+ unsigned char PortARestore = 0;
+ Direction &= 0xCF; 		// removing upper nibbel for the protection
+ PortARestore = PORTA; 		// reading the PORTA original status
+ PortARestore &= 0x30; 		// making lower direction nibbel to 0
+ PortARestore |= Direction; // adding lower nibbel for forward command and restoring the PORTA status
+ PORTA = PortARestore; 		// executing the command
+}
+
+void forward (void) //both wheels forward
+{
+  motion_set(0x06);
+}
+
+ void back (void) //both wheels backward
+{
+  motion_set(0x09);
+}
+
+void left (void) //Left wheel backward, Right wheel forward
+{
+  motion_set(0x05);
+}
+
+void right (void) //Left wheel forward, Right wheel backward
+{
+  motion_set(0x0A);
+}
+
+void stop (void)
+{
+  motion_set(0x00);
+}
+
+
+//Function used for turning robot by specified degrees
+void angle_rotate(unsigned int Degrees)
+{
+ float ReqdShaftCount = 0;
+ unsigned long int ReqdShaftCountInt = 0;
+
+ ReqdShaftCount = (float) Degrees/ 4.090; // division by resolution to get shaft count
+ ReqdShaftCountInt = (unsigned int) ReqdShaftCount;
+ ShaftCountRight = 0; 
+ ShaftCountLeft = 0; 
+
+ while (1)
+ {
+  if((ShaftCountRight >= ReqdShaftCountInt) | (ShaftCountLeft >= ReqdShaftCountInt))
+  break;
+ }
+ stop(); //Stop robot
+}
+
+
+//Function used for moving robot forward by specified distance
+
+void linear_distance_mm(unsigned int DistanceInMM)
+{
+ float ReqdShaftCount = 0;
+ unsigned long int ReqdShaftCountInt = 0;
+
+ ReqdShaftCount = DistanceInMM / 5.338; // division by resolution to get shaft count
+ ReqdShaftCountInt = (unsigned long int) ReqdShaftCount;
+  
+ ShaftCountRight = 0;
+ while(1)
+ {
+  if(ShaftCountRight > ReqdShaftCountInt)
+  {
+  	break;
+  }
+ } 
+ stop(); //Stop robot
+}
+
+void forward_mm(unsigned int DistanceInMM)
+{
+ forward();
+ linear_distance_mm(DistanceInMM);
+}
+
+ void back_mm(unsigned int DistanceInMM)
+{
+ back();
+ linear_distance_mm(DistanceInMM);
+}
+
+void left_degrees(unsigned int Degrees) 
+{
+// 88 pulses for 360 degrees rotation 4.090 degrees per count
+ left(); //Turn left
+ angle_rotate(Degrees);
+}
+
+
+
+void right_degrees(unsigned int Degrees)
+{
+// 88 pulses for 360 degrees rotation 4.090 degrees per count
+ right(); //Turn right
+ angle_rotate(Degrees);
+}
+
+
+
+
+//code for External_dc_motor
+
+
+void forward_ext(void) //forward motion for external_dc_motor
+{
+  motion_set(0x80);
+}
+
+void backward_ext(void)//backward motion for external_dc_motor
+{
+  motion_set(0x40);
+}
+
+
+//Function for moving gripper up and down through external_dc_motor
+
+void linear_distance_mm_ext(unsigned int DistanceInMM)
+{
+ float ReqdShaftCount = 0;
+ unsigned long int ReqdShaftCountInt = 0;
+
+ ReqdShaftCount = DistanceInMM / 5.338; // division by resolution to get shaft count
+ ReqdShaftCountInt = (unsigned long int) ReqdShaftCount;
+  
+ ShaftCountext = 0;
+ while(1)
+ {
+  if(ShaftCountext > ReqdShaftCountInt)
+  {
+  	break;
+  }
+ } 
+ stop(); //Stop gripper movement
+}
+
+
+void forward_mm_ext(unsigned int DistanceInMM)
+{
+ forward_ext();
+ linear_distance_mm_ext(DistanceInMM);
+}
+
+void backward_mm_ext(unsigned int DistanceInMM)
+{
+ backward_ext();
+ linear_distance_mm_ext(DistanceInMM);
+}
+
+
+
+//Code for servo motor
+
+
+
+//Function to rotate Servo 1 by a specified angle in the multiples of 2.25 degrees
+void servo_1(unsigned char degrees)  
+{
+ float PositionPanServo = 0;
+  PositionPanServo = ((float)degrees / 2.25)+21.0;//defines the way the servo motor to be rotating
+ OCR1AH = 0x00;
+ OCR1AL = (unsigned char) PositionPanServo;
+}
+
+
+//servo_free functions unlocks the servo motors from the any angle 
+//and make them free by giving 100% duty cycle at the PWM. 
+//This function can be used to reduce the power consumption of the motor if it is holding load against the gravity.
+
+void servo_1_free (void) //makes servo 1 free rotating
+{
+ OCR1AH = 0x03; 
+ OCR1AL = 0xFF; //Servo 1 off
+}
+
+
+
+int main(void)
+{
+  port_init();
+  init_devices();
+  
+int k=240;
+ int i=0;
+ while(i<3)
+   {
+     
+     servo_1(180);//for opening the gripper
+     _delay_ms(200);
+	 
+     backward_mm_ext(290);//for releasing the thread as gripper goes down
+     stop();
+     _delay_ms(300);
+    	
+
+     servo_1(100);//for closing the gripper
+     _delay_ms(300);
+
+     forward_mm_ext(225);//for winding the thread so that gripper comes up
+     _delay_ms(200);
+	  
+     servo_1_free();//making servo free to rotate
+     _delay_ms(300);
+
+     velocity(170,200);
+     back_mm(k);
+     stop();
+     _delay_ms(300);
+	     
+     velocity(190,240);
+     right_degrees(100);
+     _delay_ms(200);
+     stop();
+	    
+     velocity(145,200);
+     forward_mm(400);//for moving robot in x direction
+     stop();
+     _delay_ms(300);
+
+     backward_mm_ext(225);
+     _delay_ms(600);
+     _delay_ms(1200);
+     
+
+     servo_1(180);
+     _delay_ms(300);
+
+     forward_mm_ext(290);
+     stop();
+     _delay_ms(100);
+  
+     velocity(170,200);
+     back_mm(400);
+     _delay_ms(300);
+     stop();
+
+     velocity(190,240);
+     left_degrees(90);
+     stop();
+     _delay_ms(60);
+
+     velocity(190,240);
+     forward_mm(k);//for moving robot in y direction
+     stop();
+     _delay_ms(300);
+      
+          k=k-120;
+	  i=i+1;//for 3 iteration
+      }
+	 	  
+	    stop();
+     
+    }
+
+   
