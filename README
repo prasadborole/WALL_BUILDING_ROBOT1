@@ -13,7 +13,7 @@ COLLEGE: KONKAN GYANPETH COLLEGE OF ENGG,KARJAT
 Project Description:
 =====================
 
-“Wall building” application would help in the automation of the process of construction. 
+ï¿½Wall buildingï¿½ application would help in the automation of the process of construction. 
 
 This project aims at easing the entire process and providing a helping hand to the labourers. In this, we aim at designing a system with a camera and a robotic machine that will communicate with each other to perform the task of wall building. The ceiling camera will capture the image of the arena and feed the processed co-ordinates to the robot. The robot will then according to the fed co-ordinates, will place the bricks accordingly on the white strip.
 
@@ -30,19 +30,19 @@ Technologies Used:
 Installation Instructions:
 ===========================
 
-Before starting the execution, user should ensure that he has all the files mentioned in code files section such as "final.c", "lcd.h" and "matlabwb.m".
+Before starting the execution, user should ensure that he has all the files mentioned in code files section such as "final.c" and "matlabwb.m".
 
 Follow the instructions below:
-•	Open AVR Studio and make new project.
-•	Add "final.c" in source file 
-•	Ensure to check box related to hex file creation in configuration setting.
-•	Compile the code.
-•	Connect the firebird V programmer on to the PC in which this code exists.
-•	Burn this code into Firebird V.
-•	Attach overhead USB camera at some height and plug-in into PC. 
-•	Run the Matlab code on the PC connected with a Zigbee module (make change to the code according to the port number to which Zigbee is connected).
-•	Now switch on the Firebird.
-•	The Firebird will start working and will respond according to the co-ordinates sent by the Matlab code.
+ï¿½	Open AVR Studio and make new project.
+ï¿½	Add "final.c" in source file 
+ï¿½	Ensure to check box related to hex file creation in configuration setting.
+ï¿½	Compile the code.
+ï¿½	Connect the firebird V programmer on to the PC in which this code exists.
+ï¿½	Burn this code into Firebird V.
+ï¿½	Attach overhead USB camera at some height and plug-in into PC. 
+ï¿½	Run the Matlab code on the PC connected with a Zigbee module (make change to the code according to the port number to which Zigbee is connected).
+ï¿½	Now switch on the Firebird.
+ï¿½	The Firebird will start working and will respond according to the co-ordinates sent by the Matlab code.
 
 References:
 ============
